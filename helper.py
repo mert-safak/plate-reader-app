@@ -1,14 +1,10 @@
-# helper.py
-
 import os
 import urllib.request
 import cv2
 import numpy as np
 from ultralytics import YOLO
 
-# ------------------------------
-# MODEL İNDİRME FONKSİYONU
-# ------------------------------
+# Model indirme fonksiyonu
 def download_model(url, output_path):
     if not os.path.exists(output_path):
         print(f"[INFO] Model indiriliyor: {url}")
@@ -16,23 +12,27 @@ def download_model(url, output_path):
         urllib.request.urlretrieve(url, output_path)
         print(f"[INFO] Model indirildi: {output_path}")
 
-# ------------------------------
-# PLAKA TESPİTİ
-# ------------------------------
-def detect_plate(image, model_path):
-    # Hugging Face'ten indir (ilk kullanımda)
-    download_model(
-        "https://huggingface.co/mertsafak/plate-reader-model/resolve/main/plate_detection.pt",
-        model_path
-    )
+# Hugging Face'ten modelleri indir
+plate_model_url = "https://huggingface.co/mertsafak/plate-reader-model/resolve/main/plate_detection.pt"
+char_model_url = "https://huggingface.co/mertsafak/plate-reader-model/resolve/main/plate_reading.pt"
+plate_model_path = "Models/plate_detection.pt"
+char_model_path = "Models/plate_reading.pt"
 
+download_model(plate_model_url, plate_model_path)
+download_model(char_model_url, char_model_path)
+
+# Modelleri yükle
+plate_model = YOLO(plate_model_path)
+char_model = YOLO(char_model_path)
+
+# Plaka tespiti
+def detect_plate(image):
     green = (0, 255, 0)
     font = cv2.FONT_HERSHEY_SIMPLEX
 
     image_original = np.asarray(image).copy()
     image_array = image_original.copy()
-    model = YOLO(model_path)
-    results = model(image_array)[0]
+    results = plate_model(image_array)[0]
 
     cropped_image = None
     is_detected = 0
@@ -45,8 +45,6 @@ def detect_plate(image, model_path):
 
             if score > 0.5:
                 is_detected += 1
-
-                # Kenar boşluğu ekle
                 pad = 5
                 h, w = image_original.shape[:2]
                 x1_pad = max(0, x1 - pad)
@@ -55,7 +53,6 @@ def detect_plate(image, model_path):
                 y2_pad = min(h, y2 + pad)
 
                 cropped_image = image_original[y1_pad:y2_pad, x1_pad:x2_pad].copy()
-
                 cv2.rectangle(image_array, (x1, y1), (x2, y2), green, 2)
                 text = f"{results.names[int(class_id)]}: %{score*100:.2f}"
                 cv2.putText(image_array, text, (x1, y1 - 10), font, 0.5, green, 1, cv2.LINE_AA)
@@ -66,23 +63,13 @@ def detect_plate(image, model_path):
 
     return image_array, cropped_image, is_detected
 
-# ------------------------------
-# PLAKA OKUMA
-# ------------------------------
-def read_plate_text(cropped_image, model_path):
-    # Hugging Face'ten indir (ilk kullanımda)
-    download_model(
-        "https://huggingface.co/mertsafak/plate-reader-model/resolve/main/plate_reading.pt",
-        model_path
-    )
-
-    model = YOLO(model_path)
-
+# Karakter okuma
+def read_plate_text(cropped_image):
     h, w = cropped_image.shape[:2]
     if h < 100 or w < 100:
         cropped_image = cv2.resize(cropped_image, (640, 640), interpolation=cv2.INTER_LINEAR)
 
-    results = model.predict(source=cropped_image, imgsz=640, conf=0.25, verbose=False)[0]
+    results = char_model.predict(source=cropped_image, imgsz=640, conf=0.25, verbose=False)[0]
 
     if results.boxes is None or len(results.boxes.cls) == 0:
         print("[INFO] Karakter bulunamadı.")
@@ -92,13 +79,13 @@ def read_plate_text(cropped_image, model_path):
     boxes = results.boxes.xyxy
     ordered = sorted(zip(chars, boxes), key=lambda x: (x[1][0] + x[1][2]) / 2)
 
-    text = ''.join([model.names[int(cls)] for cls, _ in ordered])
+    text = ''.join([char_model.names[int(cls)] for cls, _ in ordered])
     print(f"[INFO] Okunan Plaka: {text}")
 
     for cls, box in ordered:
         x1, y1, x2, y2 = map(int, box)
         cv2.rectangle(cropped_image, (x1, y1), (x2, y2), (255, 0, 0), 1)
-        cv2.putText(cropped_image, model.names[int(cls)], (x1, y1 - 5),
+        cv2.putText(cropped_image, char_model.names[int(cls)], (x1, y1 - 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
 
     return text
